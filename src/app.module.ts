@@ -16,6 +16,8 @@ import { Producto } from './producto/entity/producto.entity';
 import { Proveedor } from './proveedor/entity/proveedor.entity';
 import { Rubro } from './rubro/entity/rubro.entity';
 import { ErroresModule } from './errores/errores.module';
+import { UserModule } from './user/user.module';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
@@ -47,6 +49,8 @@ import { ErroresModule } from './errores/errores.module';
     ListaModule,
     ListaProductoModule,
     ErroresModule,
+    UserModule,
+    AuthModule,
 	],
   controllers: [AppController],
   providers: [AppService],
