@@ -5,16 +5,18 @@ import { ProductoDtoCrear } from './dto/productoCrear.dto';
 import { ProductoDtoEditar } from './dto/productoEditar.dto';
 
 @Controller('producto')
-export class ProductoController { 
+export class ProductoController {
   constructor(private readonly productoService: ProductoService) { }
 
   @Get()
+  @UseGuards(UseGuards)
   @HttpCode(200)
   async getProducto(): Promise<Producto[]> {
     return await this.productoService.getProducto();
   }
 
   @Get(':id')
+  @UseGuards(UseGuards)
   @HttpCode(200)
   async getProductoById(
     @Param('id') id: string
@@ -24,6 +26,7 @@ export class ProductoController {
   }
 
   @Post()
+  @UseGuards(UseGuards)
   async createProducto(
     @Body() datos: ProductoDtoCrear
   ): Promise<Producto> {
@@ -31,6 +34,7 @@ export class ProductoController {
   }
 
   @Put(':id')
+  @UseGuards(UseGuards)
   async updateProducto(
     @Param('id') id: string,
     @Body() datos: ProductoDtoEditar
@@ -39,6 +43,7 @@ export class ProductoController {
   }
 
   @Delete(':id')
+  @UseGuards(UseGuards)
   async deleteProducto(
     @Param('id') id: string
   ): Promise<Boolean> {

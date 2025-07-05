@@ -1,10 +1,14 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, FindManyOptions, FindOneOptions, QueryRunner, Repository } from 'typeorm';
 import { ErroresService } from 'src/errores/errores.service';
 import { Proveedor } from './entity/proveedor.entity';
 import { ProveedorDtoCrear } from './dto/proveedorCrear.dto';
 import { ProveedorDtoEditar } from './dto/proveedorEditar.dto';
+import { ProductoDtoEditar } from 'src/producto/dto/productoEditar.dto';
+import { Producto } from 'src/producto/entity/producto.entity';
+import { ProductoService } from 'src/producto/producto.service';
+import { User } from 'src/user/entity/user.entity';
 
 @Injectable()
 export class ProveedorService {
@@ -12,11 +16,17 @@ export class ProveedorService {
     @InjectRepository(Proveedor) private readonly proveedorRepository: Repository<Proveedor>,
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly erroresService: ErroresService,
+    private readonly productoService: ProductoService,
   ) { }
 
-  async getProveedor(): Promise<Proveedor[]> {
+  async getProveedor(userId:string): Promise<Proveedor[]> {
     try {
       const criterio: FindManyOptions = {
+        where: {
+          user:{
+            id:userId
+          }
+        },
         order: {
           nombre: 'ASC'
         }
@@ -31,11 +41,14 @@ export class ProveedorService {
     }
   }
 
-  async getProveedorById(id: string): Promise<Proveedor | null> {
+  async getProveedorById(id: string, userId:string): Promise<Proveedor | null> {
     try {
       const criterio: FindOneOptions = {
         where: {
-          id: id
+          id: id,
+          user: {
+            id:userId
+          }
         }
       }
 
@@ -47,11 +60,14 @@ export class ProveedorService {
     }
   }
 
-  async getProveedorByName(dato: string): Promise<Proveedor | null> {
+  async getProveedorByName(dato: string, userId:string): Promise<Proveedor | null> {
     try {
       const criterio: FindOneOptions = {
         where: {
-          nombre: dato
+          nombre: dato,
+          user: {
+            id:userId
+          }
         }
       }
 
@@ -63,9 +79,9 @@ export class ProveedorService {
     }
   }
 
-  async getProveedorByIdOrFail(id: string): Promise<Proveedor> {
+  async getProveedorByIdOrFail(id: string, userId:string): Promise<Proveedor> {
     try {
-      const proveedor: Proveedor | null = await this.getProveedorById(id);
+      const proveedor: Proveedor | null = await this.getProveedorById(id, userId);
       if (!proveedor) throw new NotFoundException(`No existe proveedor con el id ${id}`)
       return proveedor;
 
@@ -74,43 +90,26 @@ export class ProveedorService {
     }
   }
 
-  async createProveedor(dato: ProveedorDtoCrear, qr?: QueryRunner): Promise<Proveedor> {
+  async createProveedor(dato: ProveedorDtoCrear, user:User): Promise<Proveedor> {
     try {
-      let proveedor: Proveedor | null = await this.getProveedorByName(dato.nombre);
+      let proveedor: Proveedor | null = await this.getProveedorByName(dato.nombre, user.id);
       if (proveedor) return proveedor;
 
       proveedor = new Proveedor()
       proveedor.nombre = dato.nombre;
       proveedor.telefono = dato.telefono;
+      proveedor.user= user;
 
-      const newProveedor: Proveedor = qr
-        ? await qr.manager.save(Proveedor, proveedor)
-        : await this.proveedorRepository.save(proveedor);
-
+      const newProveedor: Proveedor = await this.proveedorRepository.save(proveedor);
       return newProveedor;
     } catch (error) {
       throw this.erroresService.handleExceptions(error, `Error al intentar crear un nuevo dato de proveedor`)
     }
   }
 
-  async getOrCreateProveedor(dato: ProveedorDtoEditar, qr: QueryRunner): Promise<Proveedor> {
-    if (!dato) throw new NotFoundException('No tiene datos para crear o buscar proveedor');
-    if (dato.id) return await this.getProveedorByIdOrFail(dato.id);
-    if (dato.nombre && dato.telefono) return await this.createProveedor({ nombre: dato.nombre, telefono: dato.telefono }, qr);
-    throw new BadRequestException('Faltan datos para obtener o crear un proveedor');
-  }
-
-  async getOrCreateProveedores(dato: ProveedorDtoEditar[], qr:QueryRunner):Promise<Proveedor[]>{
-    if(dato.length==0) return [];
-      const proveedores: Proveedor[] = await Promise.all(
-      dato.map((d) => this.getOrCreateProveedor(d, qr))
-    );
-    return proveedores;
-  }
-
-  async updateProveedor(id: string, dato: ProveedorDtoEditar): Promise<Proveedor> {
+  async updateProveedor(id: string, dato: ProveedorDtoEditar, userId:string): Promise<Proveedor> {
     try {
-      const proveedor: Proveedor = await this.getProveedorByIdOrFail(id);
+      const proveedor: Proveedor = await this.getProveedorByIdOrFail(id, userId);
       proveedor.nombre = dato.nombre || proveedor.nombre;
       proveedor.telefono = dato.telefono || proveedor.telefono;
 
@@ -121,9 +120,52 @@ export class ProveedorService {
     }
   }
 
-  async deleteProveedor(id: string): Promise<boolean> {
+  async addProductoProveedor(id: string, datos: ProductoDtoEditar[], userId:string):Promise<Proveedor>{
+      const qr: QueryRunner = this.dataSource.createQueryRunner();
+      await qr.connect();
+      await qr.startTransaction();
+      try {
+        const proveedor: Proveedor = await this.getProveedorByIdOrFail(id, userId);
+  
+        const productos: Producto[] = await this.productoService.getOrCreateProductos(datos, qr);
+        proveedor.producto =this.productoService.addProductosUnicos(proveedor.producto, productos);
+  
+        const newProveedor: Proveedor = await qr.manager.save(Proveedor, proveedor);
+        await qr.commitTransaction();
+        return newProveedor;
+      } catch (error) {
+        await qr.rollbackTransaction();
+        throw this.erroresService.handleExceptions(error, `Error al intentar actualizar el dato de proveedor`)
+      } finally {
+        await qr.release();
+      }
+    }
+  
+    async substractProductoProveedor(id: string, datos: ProductoDtoEditar[], userId:string):Promise<Proveedor>{
+      const qr: QueryRunner = this.dataSource.createQueryRunner();
+      await qr.connect();
+      await qr.startTransaction();
+      try {
+        const proveedor: Proveedor = await this.getProveedorByIdOrFail(id, userId);
+  
+        const productos: Producto[] = await this.productoService.getOrCreateProductos(datos, qr);
+  
+        proveedor.producto = this.productoService.subProductos(proveedor.producto, productos);
+  
+        const newProveedor: Proveedor = await qr.manager.save(Proveedor, proveedor);
+        await qr.commitTransaction();
+        return newProveedor;
+      } catch (error) {
+        await qr.rollbackTransaction();
+        throw this.erroresService.handleExceptions(error, `Error al intentar actualizar el dato de proveedor`)
+      } finally {
+        await qr.release();
+      }
+    }
+
+  async deleteProveedor(id: string, userId:string): Promise<boolean> {
     try {
-      const proveedor: Proveedor = await this.getProveedorByIdOrFail(id);
+      const proveedor: Proveedor = await this.getProveedorByIdOrFail(id, userId);
 
       await this.proveedorRepository.remove(proveedor)
       return true;

@@ -8,15 +8,12 @@ export class ListaProductoDtoCrear {
   @IsUUID()
   producto: string;
 
-  @ValidateNested()
-  @Type(()=>ListaDtoEditar)
-  @ListaDtoValido({ message: 'Debe proporcionar un ID de lista existente o una fecha y un proveedor' })
-  lista:ListaDtoEditar;
-
   @IsNotEmpty()
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 }, { message: 'La cantidad debe tener como máximo 2 decimales' })
   @Min(0.01, { message: 'La cantidad mínima debe ser 0.01' })
-  @Max(99.99, { message: 'La cantidad máxima debe ser 99.99' })
+  @Max(9999.99, { message: 'La cantidad máxima debe ser 99.99' })
   cantidad: number;
+
+  
 }

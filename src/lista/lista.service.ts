@@ -9,9 +9,10 @@ import { Proveedor } from 'src/proveedor/entity/proveedor.entity';
 import { ListaDtoEditar } from './dto/listaEditar.dto';
 import { ListaProducto } from 'src/lista-producto/entity/listaProducto.entity';
 import { ListaProductoService } from 'src/lista-producto/lista-producto.service';
+import { User } from 'src/user/entity/user.entity';
 
 @Injectable()
-export class ListaService { 
+export class ListaService {
   constructor(
     @InjectRepository(Lista) private readonly listaRepository: Repository<Lista>,
     @InjectDataSource() private readonly dataSource: DataSource,
@@ -20,10 +21,15 @@ export class ListaService {
     private readonly listaProductoService: ListaProductoService,
   ) { }
 
-  async getLista(): Promise<Lista[]> {
+  async getLista(userId: string): Promise<Lista[]> {
     try {
       const criterio: FindManyOptions = {
-        relations:['proveedor'],
+        relations: ['proveedor'],
+        where: {
+          user: {
+            id: userId
+          }
+        },
         order: {
           fecha: 'ASC'
         }
@@ -38,12 +44,15 @@ export class ListaService {
     }
   }
 
-  async getListaById(id: string): Promise<Lista | null> {
+  async getListaById(id: string, userId: string): Promise<Lista | null> {
     try {
       const criterio: FindOneOptions = {
-        relations:['proveedor', 'listaProducto.producto'],
+        relations: ['proveedor', 'listaProducto.producto'],
         where: {
-          id: id
+          id: id,
+          user: {
+            id: userId
+          }
         }
       }
 
@@ -55,11 +64,14 @@ export class ListaService {
     }
   }
 
-  async getListaByFecha(fecha: Date): Promise<Lista | null> {
+  async getListaByFecha(fecha: Date, userId: string): Promise<Lista | null> {
     try {
       const criterio: FindOneOptions = {
         where: {
-          fecha: fecha
+          fecha: fecha,
+          user: {
+            id: userId
+          }
         }
       }
 
@@ -71,9 +83,9 @@ export class ListaService {
     }
   }
 
-  async getListaByIdOrFail(id: string): Promise<Lista> {
+  async getListaByIdOrFail(id: string, userId: string): Promise<Lista> {
     try {
-      const lista: Lista | null = await this.getListaById(id);
+      const lista: Lista | null = await this.getListaById(id, userId);
       if (!lista) throw new NotFoundException(`No existe lista con el id ${id}`)
       return lista;
 
@@ -82,48 +94,49 @@ export class ListaService {
     }
   }
 
-  async createLista(dato: ListaDtoCrear, qr?: QueryRunner): Promise<Lista> {
+  async createLista(dato: ListaDtoCrear, user: User): Promise<Lista> {
+    const qr: QueryRunner = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
     try {
 
-      const proveedor: Proveedor = await this.proveedorService.getProveedorByIdOrFail(dato.proveedor);
+      const proveedor: Proveedor = await this.proveedorService.getProveedorByIdOrFail(dato.proveedor, user.id);
+
+      const listaProducto: ListaProducto[] = dato.listaProductos && dato.listaProductos.length > 0
+        ? await this.listaProductoService.getOrCreateListaProductos(dato.listaProductos, qr, user)
+        : [];
 
       const lista = new Lista()
       lista.fecha = dato.fecha;
       lista.proveedor = proveedor;
+      lista.listaProductos = listaProducto
+      lista.user = user;
 
       const newLista: Lista = qr
         ? await qr.manager.save(Lista, lista)
         : await this.listaRepository.save(lista);
 
+      await qr.commitTransaction();
+
       return newLista;
     } catch (error) {
+      await qr.rollbackTransaction();
       throw this.erroresService.handleExceptions(error, `Error al intentar crear un nuevo dato la lista`)
+    } finally {
+      await qr.release();
     }
   }
 
-  async getOrCreateLista(dato: ListaDtoEditar, qr: QueryRunner): Promise<Lista> {
-    if (!dato) throw new NotFoundException('No tiene datos para crear o buscar lista');
-    if (dato.id) return await this.getListaByIdOrFail(dato.id);
-    if (dato.fecha && dato.proveedor) return await this.createLista(
-      { 
-        fecha: dato.fecha,
-        proveedor: dato.proveedor
-      }, 
-      qr
-    ); 
-    throw new BadRequestException('Faltan datos para obtener o crear la lista');
-  }
-
-  async updateLista(id: string, dato: ListaDtoEditar): Promise<Lista> {
+  async updateLista(id: string, dato: ListaDtoEditar, userId: string): Promise<Lista> {
     try {
-      const lista: Lista = await this.getListaByIdOrFail(id);
+      const lista: Lista = await this.getListaByIdOrFail(id, userId);
 
       const proveedor: Proveedor = dato && dato.proveedor
-        ? await this.proveedorService.getProveedorByIdOrFail(dato.proveedor)
+        ? await this.proveedorService.getProveedorByIdOrFail(dato.proveedor, userId)
         : lista.proveedor;
 
       const listaProducto: ListaProducto[] = dato.listaProductos && dato.listaProductos.length > 0
-        ? await this.listaProductoService.updateListaProductos(dato.listaProductos)
+        ? await this.listaProductoService.updateListaProductos(dato.listaProductos, userId)
         : lista.listaProductos;
 
       lista.fecha = dato.fecha || lista.fecha;
@@ -137,9 +150,9 @@ export class ListaService {
     }
   }
 
-  async deleteLista(id: string): Promise<boolean> {
+  async deleteLista(id: string, userId: string): Promise<boolean> {
     try {
-      const lista: Lista = await this.getListaByIdOrFail(id);
+      const lista: Lista = await this.getListaByIdOrFail(id, userId);
 
       await this.listaRepository.remove(lista)
       return true;

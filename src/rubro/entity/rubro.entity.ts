@@ -1,7 +1,8 @@
 import { Producto } from "src/producto/entity/producto.entity";
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne } from "typeorm";
+import { User } from "src/user/entity/user.entity";
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, OneToMany } from "typeorm";
 
-@Entity()
+@Entity('rubro')
 export class Rubro {
   @PrimaryGeneratedColumn('uuid')
   id:string;
@@ -9,6 +10,9 @@ export class Rubro {
   @Column({type:'varchar', length:'30'})
   rubro:string;
 
-  @ManyToOne(()=> Producto, producto=> producto.rubro)
+  @OneToMany(()=> Producto, producto=> producto.rubro, {cascade: true})
   producto:Producto[];
+
+  @ManyToOne(()=>User, user=> user.rubro)
+  user:User;
 }

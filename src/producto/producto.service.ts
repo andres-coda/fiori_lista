@@ -1,23 +1,17 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, FindManyOptions, FindOneOptions, QueryRunner, Repository } from 'typeorm';
+import { DataSource, FindManyOptions, FindOneOptions, In, QueryRunner, Repository } from 'typeorm';
 import { ErroresService } from 'src/errores/errores.service';
 import { Producto } from './entity/producto.entity';
 import { ProductoDtoCrear } from './dto/productoCrear.dto';
-import { RubroService } from 'src/rubro/rubro.service';
-import { Rubro } from 'src/rubro/entity/rubro.entity';
 import { ProductoDtoEditar } from './dto/productoEditar.dto';
-import { ProveedorService } from 'src/proveedor/proveedor.service';
-import { Proveedor } from 'src/proveedor/entity/proveedor.entity';
 
 @Injectable()
-export class ProductoService { 
+export class ProductoService {
   constructor(
     @InjectRepository(Producto) private readonly productoRepository: Repository<Producto>,
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly erroresService: ErroresService,
-    private readonly rubroService: RubroService,
-    private readonly proveedorService: ProveedorService,
   ) { }
 
   async getProducto(): Promise<Producto[]> {
@@ -53,6 +47,22 @@ export class ProductoService {
     }
   }
 
+  async getProductoByIds(ids: string[]): Promise<Producto[]> {
+    try {
+      const criterio: FindManyOptions = {
+        where: {
+          ids: In(ids)
+        }
+      }
+
+      const producto: Producto[] = await this.productoRepository.find(criterio);
+      return producto;
+
+    } catch (error) {
+      throw this.erroresService.handleExceptions(error, `Error al intentar leer los datos de producto`)
+    }
+  }
+
   async getProductoByName(dato: string): Promise<Producto | null> {
     try {
       const criterio: FindOneOptions = {
@@ -80,63 +90,60 @@ export class ProductoService {
     }
   }
 
-  async createProducto(dato: ProductoDtoCrear): Promise<Producto> {
-    const qr: QueryRunner = this.dataSource.createQueryRunner();
-    await qr.connect();
-    await qr.startTransaction();
+  async createProducto(dato: ProductoDtoCrear, qr?: QueryRunner): Promise<Producto> {
     try {
       let producto: Producto | null = await this.getProductoByName(dato.producto);
       if (producto) return producto;
 
-      const rubro: Rubro = await this.rubroService.getOrCreateRubro(dato.rubro, qr);
-
-      const proveedor: Proveedor[] = await this.proveedorService.getOrCreateProveedores(dato.proveedor, qr)
-
       producto = new Producto()
       producto.producto = dato.producto;
-      producto.rubro = rubro;
-      producto.proveedor = proveedor;
 
-      const newProducto: Producto =  await qr.manager.save(Producto, producto);
-      await qr.commitTransaction();
+      const newProducto: Producto = await this.productoRepository.save(producto)
 
       return newProducto;
     } catch (error) {
-      await qr.rollbackTransaction();
       throw this.erroresService.handleExceptions(error, `Error al intentar crear un nuevo dato de producto`)
-    } finally {
-      await qr.release();
     }
   }
 
+  async getOrCreateProducto(dato: ProductoDtoEditar, qr: QueryRunner): Promise<Producto> {
+    if (!dato) throw new NotFoundException('No tiene datos para crear o buscar el producto');
+    if (dato.id) return await this.getProductoByIdOrFail(dato.id);
+    if (dato.producto) return await this.createProducto({ producto: dato.producto }, qr);
+    throw new BadRequestException('Faltan datos para obtener o crear el producto');
+  }
+
+  addProductosUnicos(productosExistentes: Producto[], productosNuevos: Producto[]): Producto[] {
+    const productosExistentesIds = new Set(productosExistentes.map(p => p.id));
+    const productosUnicos: Producto[] = productosNuevos.filter(p => !productosExistentesIds.has(p.id));
+    return [...productosExistentes, ...productosUnicos]
+  }
+
+  subProductos(productosExistentes: Producto[], productosQuitar: Producto[]): Producto[] {
+    const productosQuitarIds = new Set(productosQuitar.map(p => p.id));
+
+    const productosFiltrados = productosExistentes.filter(p => !productosQuitarIds.has(p.id));
+    return productosFiltrados;
+  }
+
+  async getOrCreateProductos(dato: ProductoDtoEditar[], qr: QueryRunner): Promise<Producto[]> {
+    if (dato.length == 0) return [];
+    const proveedores: Producto[] = await Promise.all(
+      dato.map((d) => this.getOrCreateProducto(d, qr))
+    );
+    return proveedores;
+  }
+
   async updateProducto(id: string, dato: ProductoDtoEditar): Promise<Producto> {
-    const qr: QueryRunner = this.dataSource.createQueryRunner();
-    await qr.connect();
-    await qr.startTransaction();
     try {
       const producto: Producto = await this.getProductoByIdOrFail(id);
-
-      const rubro: Rubro = dato.rubro
-        ? await this.rubroService.getOrCreateRubro(dato.rubro, qr)
-        : producto.rubro;
-
-      const proveedor: Proveedor[] = dato.proveedor && dato.proveedor.length>0
-        ? await this.proveedorService.getOrCreateProveedores(dato.proveedor, qr)
-        : producto.proveedor;
-
       producto.producto = dato.producto || producto.producto;
-      producto.rubro = rubro;
-      producto.proveedor= proveedor;
 
-      const newProducto: Producto =  await qr.manager.save(Producto, producto);
-      await qr.commitTransaction();
+      const newProducto: Producto = await this.productoRepository.save(producto)
 
       return newProducto;
     } catch (error) {
-      await qr.rollbackTransaction();
       throw this.erroresService.handleExceptions(error, `Error al intentar actualizar el dato de producto`)
-    } finally {
-      await qr.release();
     }
   }
 
